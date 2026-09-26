@@ -10,8 +10,8 @@
 #include <sdbusplus/async/task.hpp>
 #include <xyz/openbmc_project/Common/Progress/aserver.hpp>
 
+#include <functional>
 #include <string>
-
 namespace concurrent_maintenance
 {
 
@@ -46,7 +46,8 @@ class CMObject : public sdbusplus::async::server_t<CMObject, ProgressAServer>
 {
   public:
     CMObject(sdbusplus::async::context& ctx, const std::string& objectPath,
-             const std::string& fruPath);
+             const std::string& fruPath,
+             std::function<void()> onOperationComplete);
 
     CMObject(const CMObject&) = delete;
     CMObject& operator=(const CMObject&) = delete;
@@ -93,6 +94,7 @@ class CMObject : public sdbusplus::async::server_t<CMObject, ProgressAServer>
     sdbusplus::async::context& ctx;
     const std::string objectPath;
     const std::string fruPath;
+    std::function<void()> onOperationComplete;
 };
 
 } // namespace concurrent_maintenance
