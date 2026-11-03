@@ -3,11 +3,14 @@
 
 #include "cm_object.hpp"
 
+#include "fru_identifier.hpp"
 #include "utils.hpp"
 
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/async/context.hpp>
+#include <sdbusplus/async/server.hpp>
 #include <sdbusplus/async/task.hpp>
+#include <xyz/openbmc_project/Common/Progress/common.hpp>
 
 #include <exception>
 #include <functional>
@@ -18,20 +21,34 @@ namespace concurrent_maintenance
 
 CMObject::CMObject(sdbusplus::async::context& ctx,
                    const std::string& objectPath, const std::string& fruPath) :
-    sdbusplus::async::server_t<CMObject, ProgressAServer>(ctx,
-                                                          objectPath.c_str()),
+    sdbusplus::async::server_t<CMObject, AssocDefsAServer, ProgressAServer>(
+        ctx, objectPath.c_str()),
     ctx(ctx), objectPath(objectPath), fruPath(fruPath)
 {
-    lg2::info("CM object created at {PATH} for FRU {FRUPATH}", "PATH",
-              objectPath, "FRUPATH", fruPath);
+    /* Association:
+     * "maintenance_for"  — from the CM object, the endpoint is an inventory
+     *                      item
+     * "cm_object"  — from the inventory item, what points at it is a
+     *                cm_object
+     */
+    this->associations({{"maintenance_for", "cm_object", fruPath}});
 
     this->start_time(currentTimeMicroseconds());
     this->status(OperationStatus::NotStarted);
-    this->emit_added();
+
+    // With two interface bases both define emit_added() — qualify each
+    // explicitly so the compiler knows which vtable entry to signal.
+    AssocDefsAServer<CMObject, Self>::emit_added();
+    ProgressAServer<CMObject, Self>::emit_added();
+
+    lg2::info(
+        "CM object created at {PATH} with association to inventory {INV_PATH}",
+        "PATH", objectPath, "INV_PATH", fruPath);
 }
 
-sdbusplus::async::task<> CMObject::execute(bool isRemove,
-                                           const FRUOperations& ops)
+sdbusplus::async::task<>
+    CMObject::execute(bool isRemove,
+                      std::reference_wrapper<const FRUOperations> ops)
 {
     updateStatus(OperationStatus::InProgress);
 
@@ -40,12 +57,12 @@ sdbusplus::async::task<> CMObject::execute(bool isRemove,
         if (isRemove)
         {
             lg2::info("CM object: starting remove for {PATH}", "PATH", fruPath);
-            co_await ops.remove(std::ref(ctx), fruPath, std::ref(*this));
+            co_await ops.get().remove(std::ref(ctx), fruPath, std::ref(*this));
         }
         else
         {
             lg2::info("CM object: starting add for {PATH}", "PATH", fruPath);
-            co_await ops.add(std::ref(ctx), fruPath, std::ref(*this));
+            co_await ops.get().add(std::ref(ctx), fruPath, std::ref(*this));
         }
         lg2::info("CM object: sequence completed for {PATH}", "PATH", fruPath);
         updateStatus(OperationStatus::Completed);

@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "fru_identifier.hpp"
+#include "cm_object.hpp"
 
 #include <phosphor-logging/lg2.hpp>
 #include <sdbusplus/async/context.hpp>

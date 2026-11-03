@@ -3,16 +3,58 @@
 
 #include "cm_handlers.hpp"
 
+#include "cm_object.hpp"
+
+#include <phosphor-logging/lg2.hpp>
+#include <sdbusplus/async/context.hpp>
+#include <sdbusplus/async/task.hpp>
 #include <xyz/openbmc_project/Control/SideBandBus/client.hpp>
 #include <xyz/openbmc_project/ObjectMapper/client.hpp>
+
+#include <exception>
+#include <functional>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace concurrent_maintenance
 {
 
+namespace
+{
 using ObjectMapper = sdbusplus::client::xyz::openbmc_project::ObjectMapper<>;
 using SideBandBus =
     sdbusplus::client::xyz::openbmc_project::control::SideBandBus<>;
 constexpr auto sideBandBusService = "xyz.openbmc_project.Control.SideBandBus";
+constexpr auto chassisInterface = "xyz.openbmc_project.Inventory.Item.Chassis";
+
+/**
+ * @brief Resolve the chassis inventory path that owns a FRU.
+ *
+ * @param ctx      Async context used for the mapper call.
+ * @param fruPath  Inventory path of the FRU.
+ * @return Chassis inventory path.
+ * @throws std::runtime_error if the mapper returns no chassis ancestor, or
+ *         an sdbusplus exception if the mapper call fails.
+ */
+sdbusplus::async::task<std::string>
+    getChassisPath(std::reference_wrapper<sdbusplus::async::context> ctx,
+                   std::string fruPath)
+{
+    auto ancestors =
+        co_await ObjectMapper(ctx.get())
+            .service(ObjectMapper::default_service)
+            .path(ObjectMapper::instance_path)
+            .get_ancestors(fruPath, std::vector<std::string>{chassisInterface});
+
+    if (ancestors.empty())
+    {
+        throw std::runtime_error("no Inventory.Item.Chassis ancestor found");
+    }
+
+    co_return ancestors.begin()->first;
+}
+} // namespace
 
 sdbusplus::async::task<>
     fsiCardRemove(std::reference_wrapper<sdbusplus::async::context> ctx,
@@ -25,26 +67,12 @@ sdbusplus::async::task<>
 
     try
     {
-        auto ancestors =
-            co_await ObjectMapper(ctx.get())
-                .service(ObjectMapper::default_service)
-                .path(ObjectMapper::instance_path)
-                .get_ancestors(
-                    fruPath, std::vector<std::string>{
-                                 "xyz.openbmc_project.Inventory.Item.Chassis"});
-
-        if (ancestors.empty())
-        {
-            throw std::runtime_error(
-                "no Inventory.Item.Chassis ancestor found");
-        }
-
-        chassisPath = ancestors.begin()->first;
+        chassisPath = co_await getChassisPath(ctx, fruPath);
     }
     catch (const std::exception& e)
     {
         lg2::error("FSI remove: failed to resolve chassis for {PATH}: {ERROR}",
-                   "PATH", fruPath, "ERROR", e.what());
+                   "PATH", fruPath, "ERROR", e);
         throw;
     }
 
@@ -76,25 +104,12 @@ sdbusplus::async::task<>
 
     try
     {
-        auto ancestors =
-            co_await ObjectMapper(ctx.get())
-                .service(ObjectMapper::default_service)
-                .path(ObjectMapper::instance_path)
-                .get_ancestors(
-                    fruPath, std::vector<std::string>{
-                                 "xyz.openbmc_project.Inventory.Item.Chassis"});
-        if (ancestors.empty())
-        {
-            throw std::runtime_error(
-                "no Inventory.Item.Chassis ancestor found");
-        }
-
-        chassisPath = ancestors.begin()->first;
+        chassisPath = co_await getChassisPath(ctx, fruPath);
     }
     catch (const std::exception& e)
     {
         lg2::error("FSI add: failed to resolve chassis for {PATH}: {ERROR}",
-                   "PATH", fruPath, "ERROR", e.what());
+                   "PATH", fruPath, "ERROR", e);
         throw;
     }
 
